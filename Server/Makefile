@@ -9,7 +9,7 @@ TARGET = musas
 all: $(TARGET)
 
 $(TARGET): musas.o
-	$(CC) $(CFLAGS) -o $(TARGET) musas.o
+	$(CC) $(CFLAGS) -o $(TARGET) musas.o -lm
 
 musas.o: musas.c
 	$(CC) $(CFLAGS) -c musas.c

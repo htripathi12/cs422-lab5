@@ -14,6 +14,8 @@
 
 #include <fcntl.h>
 
+#include <time.h>
+
 #include <sys/socket.h>
 
 #include <sys/wait.h>
@@ -303,7 +305,9 @@ int main(int argc, char *argv[]) {
             fprintf(stdout, "new ilambda: %f\n", new_ilambda);
           }
 
-          sendto(udp_fd, response_buf, n, 0, (struct sockaddr *)&dest, sizeof(dest));
+          ssize_t sent = sendto(udp_fd, response_buf, n, 0, (struct sockaddr *)&dest, sizeof(dest));
+          printf("Sent %ld bytes to Client UDP\n", sent);   
+
           gettimeofday(&current_tv, NULL);
           double how_long = 1000.0 * (current_tv.tv_sec - start_tv.tv_sec) + (current_tv.tv_usec - start_tv.tv_usec) / 1000.0;
           how_long = floor(how_long * 1000) / 1000.0;
@@ -324,17 +328,17 @@ int main(int argc, char *argv[]) {
 
         char path[100];
         snprintf(path, sizeof(path), "%d%s", total_sessions, logfile);
-        FILE *file_fd = fopen(path, "w");
-        if (file_fd) {
+        FILE *log_file = fopen(path, "w");
+        if (log_file) {
           for (int i = 0; i<log_count; i++) {
-            fprintf(file_fd, "%f %f\n", time_log[i], ilambda_log[i]);
+            fprintf(log_file, "%f %f\n", time_log[i], ilambda_log[i]);
           }
-          fclose(file_fd);
+          fclose(log_file);
         }
         free(ilambda_log);
         free(time_log);
         exit(0);
 
-    }`
+    }
 
 }
