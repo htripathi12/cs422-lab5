@@ -19,6 +19,9 @@
 
 #include "musac.h"
 
+/* -----------------------------------*/
+/*    BELOW COPIED FROM muaudio.c     */
+/* -----------------------------------*/
 extern void mulawopen(size_t *bufsiz);
 extern void mulawwrite(char *x);
 extern void mulawclose(void);
@@ -52,6 +55,9 @@ void mulawclose(void) {
 	snd_pcm_drain(mulawdev);
 	snd_pcm_close(mulawdev);
 }
+/* -----------------------------------*/
+/*    ABOVE COPIED FROM muaudio.c     */
+/* -----------------------------------*/
 
 static int push_audio_packet(buffer_state_t *state, const char *data) {
   if (state->packets_in_buffer >= state->num_packets) {
@@ -156,22 +162,6 @@ static float compute_updated_ilambda(
   }
 
   return new_ilambda;
-}
-
-static void send_feedback_packet(
-  int udpsock,
-  const char *server_ip,
-  int server_port,
-  float ilambda
-) {
-  struct sockaddr_in server_udp;
-  memset(&server_udp, 0, sizeof(server_udp));
-  server_udp.sin_family = AF_INET;
-  server_udp.sin_port = htons((uint16_t)server_port);
-  inet_pton(AF_INET, server_ip, &server_udp.sin_addr);
-  
-  sendto(udpsock, &ilambda, sizeof(float), 0,
-         (struct sockaddr *)&server_udp, sizeof(server_udp));
 }
 
 int main(int argc, char **argv) {
@@ -301,9 +291,124 @@ int main(int argc, char **argv) {
     perror("send(port)");
   }
 
+  // Initialize buffer state
+  buffer_state_t state;
+  state.num_packets = bufsize / 4096;
+  state.write_pos = 0;
+  state.read_pos = 0;
+  state.packets_in_buffer = 0;
+  state.audio_buffer = malloc(sizeof(char*) * state.num_packets);
+  for (int i = 0; i < state.num_packets; i++) {
+    state.audio_buffer[i] = malloc(4096);
+  }
+  state.log_len = 100000;
+  state.Q_log = malloc(sizeof(double) * state.log_len);
+  state.time_log = malloc(sizeof(double) * state.log_len);
+  state.log_count = 0;
+  gettimeofday(&state.start_tv, NULL);
+
+  // Initialize the audio device before receiving packets
+  size_t device_bufsiz;
+  mulawopen(&device_bufsiz);
+
+  struct timeval next_playback_time;
+  gettimeofday(&next_playback_time, NULL);
+
+  struct pollfd poll_fds[2];
+  poll_fds[0].fd = udpsock;
+  poll_fds[0].events = POLLIN;
+  poll_fds[1].fd = tcpsock;
+  poll_fds[1].events = POLLIN;
+
+  struct sockaddr_in server_udp_addr;
+  socklen_t addr_len = sizeof(server_udp_addr);
+
+  int got_server_address = 0;
+  int streaming_done = 0;
+  while (!streaming_done) {
+    // Poll both UDP and TCP sockets for incoming data (10ms timeout)
+    int poll_res = poll(poll_fds, 2, 10);
+
+    // Handle incoming audio packets from server over UDP
+    if (poll_res > 0 && (poll_fds[0].revents & POLLIN)) {
+      char packet[4096];
+      if (recvfrom(udpsock, packet, 4096, 0, (struct sockaddr *)&server_udp_addr, &addr_len) == 4096) {
+        // Add packet to circular buffer and record the server's address
+        push_audio_packet(&state, packet);
+        got_server_address = 1;
+      }
+    }
+
+    // Check for termination signal from server over TCP
+    if (poll_res > 0 && (poll_fds[1].revents & POLLIN)) {
+      char signal;
+      if (recv(tcpsock, &signal, 1, 0) > 0 && signal == 'Q') {
+        streaming_done = 1;
+        printf("Server finished streaming.\n");
+      }
+    }
+
+    // Get current time and check if it's time to play the next audio block
+    struct timeval now;
+    gettimeofday(&now, NULL);
+
+    double now_sec = now.tv_sec + (now.tv_usec / 1000000.0);
+    double next_sec = next_playback_time.tv_sec + (next_playback_time.tv_usec / 1000000.0);
+    if (now_sec >= next_sec) {
+      // Pop and play the next audio packet from buffer
+      char *block = pop_audio_packet(&state);
+      if (block) {
+        mulawwrite(block); 
+      } else {
+        fprintf(stderr, "Buffer Underrun!\n");
+      }
+
+      // Measure current buffer size
+      int current_Q = state.packets_in_buffer * 4096;
+      
+      // Update ilambda based on how much buffer is filled and the targeted buffer fill amount
+      ilambda = compute_updated_ilambda(ilambda, igamma, current_Q, targetbf, epsilon, beta);
+      if (got_server_address) {
+        sendto(udpsock, &ilambda, sizeof(float), 0, (struct sockaddr *)&server_udp_addr, addr_len);
+      }
+
+      // Record the current buffer state and timestamp for tracing/analysis
+      record_trace(&state, current_Q);
+
+      // Schedule the next playback time: add igamma (playback interval) to current schedule
+      double next_val = next_sec + igamma;
+      next_playback_time.tv_sec = (long)next_val;
+      next_playback_time.tv_usec = (long)((next_val - (long)next_val) * 1000000);
+
+      // Small sleep (5ms) to prevent tight polling loop
+      struct timespec ts = {0, 5000000}; 
+      nanosleep(&ts, NULL);
+    }
+  }
+
+  mulawclose();
+
+  // Write trace data
+  FILE *fp = fopen(ctrace_file, "w"); 
+  if (fp) {
+    for (int i = 0; i < state.log_count; i++) {
+      fprintf(fp, "%.3f %.0f\n", state.time_log[i], state.Q_log[i]);
+    }
+    fclose(fp);
+    printf("Saved trace to %s\n", ctrace_file);
+  } else {
+    perror("Failed to open log file");
+  }
+
+
+  // Cleanup
+  for (int i = 0; i < state.num_packets; i++) {
+    free(state.audio_buffer[i]);
+  }
+  free(state.audio_buffer);
+  free(state.Q_log);
+  free(state.time_log);
   close(udpsock);
   close(tcpsock);
   return 0;
 }
-
-
