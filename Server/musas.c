@@ -1,7 +1,5 @@
 // Leo Deng, deng279
-
-// Hersh
-
+// Hersh, tripathh
 // Louis Nguyen, nguye576
 
 #include <stdio.h>

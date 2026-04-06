@@ -1,16 +1,22 @@
 // musac.c
-// Leo Deng -
+// Leo Deng - deng279
 // Louis Nguyen - nguye576
-// Hersh -
+// Hersh - tripathh
 
 #include <arpa/inet.h>
+#include <fcntl.h>
+#include <math.h>
 #include <netinet/in.h>
+#include <poll.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <unistd.h>
+
+#include "musac.h"
 
 static int validate_audiofile(const char *s) {
   int n = strlen(s);
@@ -43,6 +49,60 @@ static void usage(const char *s) {
   exit(1);
 }
 
+static int load_control_params(float *ilambda, float *epsilon, float *beta) {
+  FILE *control_fp = fopen("control-param.dat", "r");
+  if (control_fp == NULL) {
+    perror("fopen");
+    return 0;
+  }
+  
+  if (fscanf(control_fp, "%f %f %f", ilambda, epsilon, beta) != 3) {
+    fprintf(stderr, "control-param.dat must contain three floats\n");
+    fclose(control_fp);
+    return 0;
+  }
+
+
+  fclose(control_fp);
+  return 1;
+}
+
+static float compute_updated_ilambda(
+  float ilambda,
+  float igamma,
+  int Q,
+  int targetbf,
+  float epsilon,
+  float beta
+) {
+  float term1 = ((float) Q - (float) targetbf) * epsilon;
+  float term2 = (igamma - ilambda) * beta;
+  float new_ilambda = ilambda - term1 - term2;
+  
+  if (new_ilambda < 0.001) {
+    new_ilambda = 0.001;
+  }
+
+
+  return new_ilambda;
+}
+
+static void send_feedback_packet(
+  int udpsock,
+  const char *server_ip,
+  int server_port,
+  float ilambda
+) {
+  struct sockaddr_in server_udp;
+  memset(&server_udp, 0, sizeof(server_udp));
+  server_udp.sin_family = AF_INET;
+  server_udp.sin_port = htons((uint16_t)server_port);
+  inet_pton(AF_INET, server_ip, &server_udp.sin_addr);
+  
+  sendto(udpsock, &ilambda, sizeof(float), 0,
+         (struct sockaddr *)&server_udp, sizeof(server_udp));
+}
+
 int main(int argc, char **argv) {
   if (argc != 8) {
     usage(argv[0]);
@@ -61,21 +121,10 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  float ilambda;
-  float epsilon;
-  float beta;
-  FILE *control_fp = fopen("control-param.dat", "r");
-  if (control_fp == NULL) {
-    perror("fopen");
+  float ilambda, epsilon, beta;
+  if (!load_control_params(&ilambda, &epsilon, &beta)) {
     return 1;
   }
-  
-  if (fscanf(control_fp, "%f %f %f", &ilambda, &epsilon, &beta) != 3) {
-    fprintf(stderr, "control-param.dat must contain three floats\n");
-    fclose(control_fp);
-    return 1;
-  }
-  fclose(control_fp);
 
   if (igamma <= 0) {
     fprintf(stderr, "igamma must be positive\n");
