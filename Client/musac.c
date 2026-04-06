@@ -18,6 +18,48 @@
 
 #include "musac.h"
 
+extern void mulawopen(size_t *bufsiz);
+extern void mulawwrite(char *x);
+extern void mulawclose(void);
+
+static int push_audio_packet(buffer_state_t *state, const char *data) {
+  if (state->packets_in_buffer >= state->num_packets) {
+    return 0;
+  }
+
+  memcpy(state->audio_buffer[state->write_pos], data, 4096);
+  state->write_pos = (state->write_pos + 1) % state->num_packets;
+  state->packets_in_buffer++;
+
+  return 1;
+}
+
+static char* pop_audio_packet(buffer_state_t *state) {
+  if (state->packets_in_buffer <= 0) {
+    return NULL;
+  }
+
+  char *block = state->audio_buffer[state->read_pos];
+  state->read_pos = (state->read_pos + 1) % state->num_packets;
+  state->packets_in_buffer--;
+
+  return block;
+}
+
+static void record_trace(buffer_state_t *state, int current_Q) {
+  if (state->log_count >= state->log_len) {
+    return;
+  }
+
+  struct timeval now;
+  gettimeofday(&now, NULL);
+  double elapsed = (now.tv_sec - state->start_tv.tv_sec) * 1000.0 + 
+                   (now.tv_usec - state->start_tv.tv_usec) / 1000.0;
+  state->time_log[state->log_count] = elapsed;
+  state->Q_log[state->log_count] = (double) current_Q;
+  state->log_count++;
+}
+
 static int validate_audiofile(const char *s) {
   int n = strlen(s);
   
@@ -62,7 +104,6 @@ static int load_control_params(float *ilambda, float *epsilon, float *beta) {
     return 0;
   }
 
-
   fclose(control_fp);
   return 1;
 }
@@ -77,12 +118,11 @@ static float compute_updated_ilambda(
 ) {
   float term1 = ((float) Q - (float) targetbf) * epsilon;
   float term2 = (igamma - ilambda) * beta;
-  float new_ilambda = ilambda - term1 - term2;
+  float new_ilambda = ilambda + term1 + term2;
   
   if (new_ilambda < 0.001) {
     new_ilambda = 0.001;
   }
-
 
   return new_ilambda;
 }
@@ -167,7 +207,7 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  //send audiofile to server
+  // request audiofile from server
   send(tcpsock, audiofile, strlen(audiofile), 0);
 
   char response;
