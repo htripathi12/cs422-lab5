@@ -13,7 +13,29 @@
 #include <unistd.h>
 
 static int validate_audiofile(const char *s) {
-  // TODO: implement function
+  int n = strlen(s);
+  
+  // filename length 
+  if (n < 4 || n - 3 > 12) {
+    return 0;
+  }
+
+  // must end with .au
+  if (s[n - 3] != '.' || s[n - 2] != 'a' || s[n - 1] != 'u') {
+    return 0;
+  }
+
+  // filename part must be lowercase alphanumeric only
+  for (int i = 0; i < n - 3; ++i) {
+    int is_lowercase = (s[i] >= 'a' && s[i] <= 'z');
+    int is_digit = (s[i] >= '0' && s[i] <= '9');
+    
+    if (!is_lowercase && !is_digit) {
+      return 0;
+    }
+  }
+
+  return 1;
 }
 
 static void usage(const char *s) {
