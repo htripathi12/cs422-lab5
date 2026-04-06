@@ -9,7 +9,7 @@ TARGET = musac
 all: $(TARGET)
 
 $(TARGET): musac.o
-	$(CC) $(CFLAGS) -o $(TARGET) musac.o
+	$(CC) $(CFLAGS) -o $(TARGET) musac.o -lasound -lm
 
 musac.o: musac.c
 	$(CC) $(CFLAGS) -c musac.c

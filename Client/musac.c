@@ -4,6 +4,7 @@
 // Hersh - tripathh
 
 #include <arpa/inet.h>
+#include <alsa/asoundlib.h>
 #include <fcntl.h>
 #include <math.h>
 #include <netinet/in.h>
@@ -21,6 +22,36 @@
 extern void mulawopen(size_t *bufsiz);
 extern void mulawwrite(char *x);
 extern void mulawclose(void);
+
+static snd_pcm_t *mulawdev;
+static snd_pcm_uframes_t mulawfrms;
+
+// Initialize audio device.
+void mulawopen(size_t *bufsiz) {
+	snd_pcm_hw_params_t *p;
+	unsigned int rate = 8000;
+
+	snd_pcm_open(&mulawdev, "default", SND_PCM_STREAM_PLAYBACK, 0);
+	snd_pcm_hw_params_alloca(&p);
+	snd_pcm_hw_params_any(mulawdev, p);
+	snd_pcm_hw_params_set_access(mulawdev, p, SND_PCM_ACCESS_RW_INTERLEAVED);
+	snd_pcm_hw_params_set_format(mulawdev, p, SND_PCM_FORMAT_MU_LAW);
+	snd_pcm_hw_params_set_channels(mulawdev, p, 1);
+	snd_pcm_hw_params_set_rate_near(mulawdev, p, &rate, 0);
+	snd_pcm_hw_params(mulawdev, p);
+	snd_pcm_hw_params_get_period_size(p, &mulawfrms, 0);
+	*bufsiz = (size_t)mulawfrms;
+	return;
+}
+
+// Write to audio device.
+#define mulawwrite(x) snd_pcm_writei(mulawdev, x, mulawfrms)
+
+// Close audio device.
+void mulawclose(void) {
+	snd_pcm_drain(mulawdev);
+	snd_pcm_close(mulawdev);
+}
 
 static int push_audio_packet(buffer_state_t *state, const char *data) {
   if (state->packets_in_buffer >= state->num_packets) {
