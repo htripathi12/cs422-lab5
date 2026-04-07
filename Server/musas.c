@@ -288,8 +288,11 @@ int main(int argc, char *argv[]) {
         struct pollfd poll_fd;
         poll_fd.fd = udp_fd;
         poll_fd.events = POLLIN;
+        int bytes_read = 0;
+        int bytes_sent = 0;
         while(1) {
           n = read(file_fd, response_buf, 4096);
+          bytes_read += n;
           if (n <= 0) {
             break;
           }
@@ -304,9 +307,10 @@ int main(int argc, char *argv[]) {
             ilambda = new_ilambda;
             fprintf(stdout, "new ilambda: %f\n", new_ilambda);
           }
-
+          
           ssize_t sent = sendto(udp_fd, response_buf, n, 0, (struct sockaddr *)&dest, sizeof(dest));
-          printf("Sent %ld bytes to Client UDP\n", sent);   
+          bytes_sent += sent;
+          // printf("Sent %ld bytes to Client UDP\n", sent);   
 
           gettimeofday(&current_tv, NULL);
           double how_long = 1000.0 * (current_tv.tv_sec - start_tv.tv_sec) + (current_tv.tv_usec - start_tv.tv_usec) / 1000.0;
@@ -320,6 +324,8 @@ int main(int argc, char *argv[]) {
           timesleep.tv_nsec = (long)((ilambda - timesleep.tv_sec) * 1e9);
           nanosleep(&timesleep, NULL);
         }
+        fprintf(stdout, "read %d bytes\n", bytes_read);
+        fprintf(stdout, "sent %d bytes\n", bytes_sent);
 
         send(connection_fd, "Q", 1, 0);
         close(file_fd);

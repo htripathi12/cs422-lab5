@@ -61,7 +61,8 @@ void mulawclose(void) {
 
 static int push_audio_packet(buffer_state_t *state, const char *data) {
   if (state->packets_in_buffer >= state->num_packets) {
-    return 0;
+      fprintf(stderr, "Buffer overflow! dropping packet\n");
+      return 0;
   }
 
   memcpy(state->audio_buffer[state->write_pos], data, 4096);
@@ -325,66 +326,72 @@ int main(int argc, char **argv) {
 
   int got_server_address = 0;
   int streaming_done = 0;
-  while (!streaming_done) {
-    // Poll both UDP and TCP sockets for incoming data (10ms timeout)
-    int poll_res = poll(poll_fds, 2, 10);
-
-    // Handle incoming audio packets from server over UDP
-    if (poll_res > 0 && (poll_fds[0].revents & POLLIN)) {
-      char packet[4096];
-      if (recvfrom(udpsock, packet, 4096, 0, (struct sockaddr *)&server_udp_addr, &addr_len) == 4096) {
-        // Add packet to circular buffer and record the server's address
-        push_audio_packet(&state, packet);
-        got_server_address = 1;
-      }
+  int bytes_received = 0;
+  while (!streaming_done || state.packets_in_buffer > 0) {
+    // finish all waiting udp before playing
+    while (1) {
+        int has_udp = poll(poll_fds, 1, 0) > 0 && (poll_fds[0].revents & POLLIN);
+        if (!has_udp) {
+          break;
+        }
+        char packet[4096];
+        ssize_t received = recvfrom(udpsock, packet, 4096, 0, (struct sockaddr *)&server_udp_addr, &addr_len);
+        if (received > 0) {
+            push_audio_packet(&state, packet);
+            bytes_received += received;
+            got_server_address = 1;
+            int current_Q = state.packets_in_buffer * 4096;
+            ilambda = compute_updated_ilambda(ilambda, igamma, current_Q, targetbf, epsilon, beta);
+            sendto(udpsock, &ilambda, sizeof(float), 0, (struct sockaddr *)&server_udp_addr, addr_len);
+        }
     }
 
     // Check for termination signal from server over TCP
-    if (poll_res > 0 && (poll_fds[1].revents & POLLIN)) {
-      char signal;
-      if (recv(tcpsock, &signal, 1, 0) > 0 && signal == 'Q') {
-        streaming_done = 1;
-        printf("Server finished streaming.\n");
-      }
+    int tcp_ready = poll(&poll_fds[1], 1, 0) > 0 && (poll_fds[1].revents & POLLIN);
+    if (tcp_ready) {
+        char signal;
+        if (recv(tcpsock, &signal, 1, 0) > 0 && signal == 'Q') {
+            streaming_done = 1;
+            printf("Server finished, bytes received: %d\n", bytes_received);
+        }
     }
-
     // Get current time and check if it's time to play the next audio block
     struct timeval now;
     gettimeofday(&now, NULL);
 
-    double now_sec = now.tv_sec + (now.tv_usec / 1000000.0);
-    double next_sec = next_playback_time.tv_sec + (next_playback_time.tv_usec / 1000000.0);
-    if (now_sec >= next_sec) {
-      // Pop and play the next audio packet from buffer
-      char *block = pop_audio_packet(&state);
-      if (block) {
-        mulawwrite(block); 
-      } else {
+    // Pop and play the next audio packet from buffer
+    char *block = pop_audio_packet(&state);
+    if (block) {
+        mulawwrite(block);
+        int current_Q = state.packets_in_buffer * 4096;
+        ilambda = compute_updated_ilambda(ilambda, igamma, current_Q, targetbf, epsilon, beta);
+        if (got_server_address) {
+            sendto(udpsock, &ilambda, sizeof(float), 0, (struct sockaddr *)&server_udp_addr, addr_len);
+        }
+        record_trace(&state, current_Q);
+        struct timespec ts;
+        ts.tv_sec = (long)igamma;
+        ts.tv_nsec = (long)((igamma - ts.tv_sec) * 1e9);
+        nanosleep(&ts, NULL);
+    } else {
         fprintf(stderr, "Buffer Underrun!\n");
-      }
-
-      // Measure current buffer size
-      int current_Q = state.packets_in_buffer * 4096;
-      
-      // Update ilambda based on how much buffer is filled and the targeted buffer fill amount
-      ilambda = compute_updated_ilambda(ilambda, igamma, current_Q, targetbf, epsilon, beta);
-      if (got_server_address) {
-        sendto(udpsock, &ilambda, sizeof(float), 0, (struct sockaddr *)&server_udp_addr, addr_len);
-      }
-
-      // Record the current buffer state and timestamp for tracing/analysis
-      record_trace(&state, current_Q);
+        struct timespec ts;
+        ts.tv_sec = 0;
+        ts.tv_nsec = 10000000;
+        nanosleep(&ts, NULL);
+    }
 
       // Schedule the next playback time: add igamma (playback interval) to current schedule
-      double next_val = next_sec + igamma;
-      next_playback_time.tv_sec = (long)next_val;
-      next_playback_time.tv_usec = (long)((next_val - (long)next_val) * 1000000);
+      
+      // double next_val = next_sec + igamma;
+      // next_playback_time.tv_sec = (long)next_val;
+      // next_playback_time.tv_usec = (long)((next_val - (long)next_val) * 1000000);
 
-      // Small sleep (5ms) to prevent tight polling loop
-      struct timespec ts = {0, 5000000}; 
-      nanosleep(&ts, NULL);
-    }
+      // // Small sleep (5ms) to prevent tight polling loop
+      // struct timespec ts = {0, 5000000}; 
+      // nanosleep(&ts, NULL);
   }
+  
 
   mulawclose();
 
