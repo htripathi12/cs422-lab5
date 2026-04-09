@@ -35,6 +35,8 @@
 #include <math.h>
 
 
+#define BLOCK_SIZE 4096
+
 int current_sessions = 0;
 
 int total_sessions = 0;
@@ -283,7 +285,7 @@ int main(int argc, char *argv[]) {
         gettimeofday(&start_tv, NULL);
 
         ssize_t n;
-        char response_buf[4096];
+        char response_buf[BLOCK_SIZE];
 
         struct pollfd poll_fd;
         poll_fd.fd = udp_fd;
@@ -291,7 +293,7 @@ int main(int argc, char *argv[]) {
         int bytes_read = 0;
         int bytes_sent = 0;
         while(1) {
-          n = read(file_fd, response_buf, 4096);
+          n = read(file_fd, response_buf, BLOCK_SIZE);
           bytes_read += n;
           if (n <= 0) {
             break;

@@ -19,6 +19,8 @@
 
 #include "musac.h"
 
+#define BLOCK_SIZE 4096
+
 /* -----------------------------------*/
 /*    BELOW COPIED FROM muaudio.c     */
 /* -----------------------------------*/
@@ -65,7 +67,7 @@ static int push_audio_packet(buffer_state_t *state, const char *data) {
       return 0;
   }
 
-  memcpy(state->audio_buffer[state->write_pos], data, 4096);
+  memcpy(state->audio_buffer[state->write_pos], data, BLOCK_SIZE);
   state->write_pos = (state->write_pos + 1) % state->num_packets;
   state->packets_in_buffer++;
 
@@ -198,12 +200,12 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  if (bufsize <= 0 || bufsize % 4096 != 0) {
+  if (bufsize <= 0 || bufsize % BLOCK_SIZE != 0) {
     fprintf(stderr, "bufsize error\n");
     return 1;
   }
 
-  if (targetbf < 0 || targetbf > bufsize || targetbf % 4096 != 0) {
+  if (targetbf < 0 || targetbf > bufsize || targetbf % BLOCK_SIZE != 0) {
     fprintf(stderr, "targetbf error\n");
     return 1;
   }
@@ -294,13 +296,13 @@ int main(int argc, char **argv) {
 
   // Initialize buffer state
   buffer_state_t state;
-  state.num_packets = bufsize / 4096;
+  state.num_packets = bufsize / BLOCK_SIZE;
   state.write_pos = 0;
   state.read_pos = 0;
   state.packets_in_buffer = 0;
   state.audio_buffer = malloc(sizeof(char*) * state.num_packets);
   for (int i = 0; i < state.num_packets; i++) {
-    state.audio_buffer[i] = malloc(4096);
+    state.audio_buffer[i] = malloc(BLOCK_SIZE);
   }
   state.log_len = 100000;
   state.Q_log = malloc(sizeof(double) * state.log_len);
@@ -334,13 +336,13 @@ int main(int argc, char **argv) {
         if (!has_udp) {
           break;
         }
-        char packet[4096];
-        ssize_t received = recvfrom(udpsock, packet, 4096, 0, (struct sockaddr *)&server_udp_addr, &addr_len);
+        char packet[BLOCK_SIZE];
+        ssize_t received = recvfrom(udpsock, packet, BLOCK_SIZE, 0, (struct sockaddr *)&server_udp_addr, &addr_len);
         if (received > 0) {
             push_audio_packet(&state, packet);
             bytes_received += received;
             got_server_address = 1;
-            int current_Q = state.packets_in_buffer * 4096;
+            int current_Q = state.packets_in_buffer * BLOCK_SIZE;
             ilambda = compute_updated_ilambda(ilambda, igamma, current_Q, targetbf, epsilon, beta);
             sendto(udpsock, &ilambda, sizeof(float), 0, (struct sockaddr *)&server_udp_addr, addr_len);
         }
@@ -363,7 +365,7 @@ int main(int argc, char **argv) {
     char *block = pop_audio_packet(&state);
     if (block) {
         mulawwrite(block);
-        int current_Q = state.packets_in_buffer * 4096;
+        int current_Q = state.packets_in_buffer * BLOCK_SIZE;
         ilambda = compute_updated_ilambda(ilambda, igamma, current_Q, targetbf, epsilon, beta);
         if (got_server_address) {
             sendto(udpsock, &ilambda, sizeof(float), 0, (struct sockaddr *)&server_udp_addr, addr_len);

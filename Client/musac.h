@@ -5,7 +5,7 @@
 #include <stdio.h>
 
 typedef struct {
-  char **audio_buffer; // Circular buffer storing audio packets (max size 4096)
+  char **audio_buffer; // Circular buffer storing audio packets
   int num_packets; // Max # of packets buffer can hold
   int write_pos; // Index of new packet(s) written into buffer
   int read_pos; // Index of where packets are read from buffer
